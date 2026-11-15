@@ -191,6 +191,20 @@ function rewriteHtml(html, targetOrigin, proxyOrigin, pathPrefix) {
   return $.html();
 }
 
+function botCheckFallbackPage(realUrl) {
+  const escaped = realUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>One more step</title>
+<meta http-equiv="refresh" content="3;url=${escaped}">
+<style>body{font-family:-apple-system,sans-serif;max-width:480px;margin:80px auto;padding:0 20px;color:#1a1a1a;text-align:center}
+a{color:#1a73e8}</style></head>
+<body>
+<h2>This site wants to confirm you're not a bot</h2>
+<p>Redirecting you there directly in a moment so you can continue&hellip;</p>
+<p><a href="${escaped}">Click here if you're not redirected</a></p>
+</body></html>`;
+}
+
 async function fetchTarget(targetUrl, req, code) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -240,6 +254,18 @@ async function proxyTargetToResponse(link, req, res, opts) {
 
   const response = await fetchTarget(realUrl, req, link.code);
   const contentType = response.headers.get('content-type') || '';
+
+  // The target itself (notably Google) sometimes lands its own bot-check /
+  // CAPTCHA page here (e.g. Google's "/sorry/..." interstitial). That page's
+  // own reCAPTCHA widget is bound to the real site's domain and simply
+  // doesn't work when served from ours - serving it would just show the
+  // visitor a broken, unsolvable challenge. Rather than attempt to defeat
+  // that challenge (out of scope - we don't try to evade bot detection),
+  // send the visitor to the real URL so they can clear it there directly.
+  if (/\/sorry\//.test(response.url || '')) {
+    res.status(200).send(botCheckFallbackPage(realUrl));
+    return;
+  }
 
   updateCookieJar(link.code, response.headers.raw()['set-cookie']);
 
