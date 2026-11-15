@@ -100,6 +100,16 @@ sudo brew services start dnsmasq
 
 Phir browser me kholen: **http://tiny.test:8080/**
 
+## Google search links (`GOOGLE_PSE_CX`)
+
+Google search ko server-side proxy karne par Google bot-check dikhata hai.
+Iska hal: [programmablesearchengine.google.com](https://programmablesearchengine.google.com)
+par ek search engine banayen ("Search the entire web" on), uska **Search
+engine ID** `GOOGLE_PSE_CX` env var me set karen. Phir Google search links
+apni domain par Google ke official search widget wale page par khulenge
+(`/<code>?q=...`), address bar apni domain par rahega aur captcha nahi aayega.
+Variable set na ho to purana proxy behaviour chalta hai.
+
 ## Production: Render.com par deploy karna
 
 Ye repo [render.yaml](render.yaml) ke through ek Render **Blueprint** hai —

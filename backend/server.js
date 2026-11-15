@@ -14,6 +14,12 @@ const BASE_DOMAIN = process.env.BASE_DOMAIN || 'tiny.test';
 // proxy.js's pathPrefix handling for how that keeps root-relative URLs (and
 // JS that builds them from location.origin) from escaping the link's code.
 const SUBDOMAIN_MODE = process.env.SUBDOMAIN_MODE !== 'false';
+// Google Programmable Search Engine ID. When set, Google search links are
+// served as a results page on our own domain using Google's official
+// embeddable search element, instead of being proxied server-side (Google
+// flags server-side proxied search traffic as a bot; the embed runs in the
+// visitor's own browser, so it doesn't).
+const GOOGLE_PSE_CX = process.env.GOOGLE_PSE_CX || '';
 const CODE_LENGTH = 8;
 // Lowercase letters + digits only: safe as a DNS label in every resolver,
 // unlike nanoid's default alphabet (which includes "_" and "-").
@@ -31,6 +37,48 @@ function shortUrlFor(req, code) {
   return SUBDOMAIN_MODE
     ? `${req.protocol}://${code}.${BASE_DOMAIN}${portSuffix}`
     : `${req.protocol}://${BASE_DOMAIN}${portSuffix}/${code}`;
+}
+
+// Returns the search query for a Google search/home URL, or null for anything
+// else (including when no PSE is configured).
+function googleSearchQuery(targetUrl) {
+  if (!GOOGLE_PSE_CX) return null;
+  const url = new URL(targetUrl);
+  if (!/^(www\.)?google\.[a-z.]+$/i.test(url.hostname)) return null;
+  if (url.pathname !== '/' && url.pathname !== '/search') return null;
+  return url.searchParams.get('q') || '';
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// The search element runs a search automatically on load when the page URL
+// carries the `q` query parameter, so callers redirect to `?q=...` first.
+function googleSearchPage(query) {
+  const title = query ? `${escapeHtml(query)} - Search` : 'Search';
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>body{font-family:arial,sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#fff}</style>
+<script async src="https://cse.google.com/cse.js?cx=${encodeURIComponent(GOOGLE_PSE_CX)}"></script>
+</head><body>
+<div class="gcse-search" data-queryParameterName="q" data-linkTarget="_self"></div>
+</body></html>`;
+}
+
+// Serves the Google search page if `link` is a Google search link. Handles
+// the redirect to `basePath?q=...` when the URL doesn't carry the query yet.
+function serveGoogleSearch(link, req, res, basePath) {
+  const query = googleSearchQuery(link.target_url);
+  if (query === null) return false;
+  if (req.query.q === undefined && query) {
+    res.redirect(302, `${basePath}?q=${encodeURIComponent(query)}`);
+  } else {
+    res.send(googleSearchPage(typeof req.query.q === 'string' ? req.query.q : query));
+  }
+  return true;
 }
 
 function subdomainCode(hostname) {
@@ -53,6 +101,10 @@ app.use(async (req, res, next) => {
 
   const link = await getLink(code);
   if (!link) return res.status(404).send('Unknown short link');
+
+  if (req.method === 'GET' && (req.path === '/' || req.path === '/search') && serveGoogleSearch(link, req, res, '/')) {
+    return;
+  }
 
   // The very first hit is the bare subdomain root ("/"), but the shortened
   // URL may have had its own path/query (e.g. a Google search results page).
@@ -128,6 +180,8 @@ app.get('/:code', async (req, res) => {
     return res.redirect(`${shortUrlFor(req, req.params.code)}/`);
   }
 
+  if (serveGoogleSearch(link, req, res, `/${req.params.code}`)) return;
+
   const target = new URL(link.target_url);
   const entryPath = `${target.pathname}${target.search}`;
   return res.redirect(302, `${shortUrlFor(req, req.params.code)}${entryPath}`);
@@ -138,6 +192,13 @@ app.get('/:code', async (req, res) => {
 app.all('/:code/*', async (req, res) => {
   const link = await getLink(req.params.code);
   if (!link) return res.status(404).send('Unknown short link');
+
+  // Older links (and bookmarks) already landed on /<code>/search?... before
+  // the search page existed - send those to the search page too.
+  if (req.method === 'GET' && req.path === `/${req.params.code}/search` && googleSearchQuery(link.target_url) !== null) {
+    const q = typeof req.query.q === 'string' ? req.query.q : googleSearchQuery(link.target_url);
+    return res.redirect(302, `/${req.params.code}?q=${encodeURIComponent(q)}`);
+  }
 
   try {
     await proxyTargetToResponse(link, req, res, {

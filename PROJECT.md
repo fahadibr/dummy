@@ -146,6 +146,28 @@ This was the single hardest case, investigated in depth:
    an adversarial, worst-case target, not representative of the tool's
    typical use.
 
+## Solution for Google Search: Programmable Search Engine embed
+
+The root cause above is that Google sees search traffic coming from our
+**server's** IP. The fix that keeps the visitor on our domain without
+evading anything is to stop proxying Google search server-side and use
+Google's own, officially embeddable search element instead:
+
+- Set `GOOGLE_PSE_CX` to the Search engine ID of a Programmable Search Engine
+  (created at programmablesearchengine.google.com with "Search the entire
+  web" enabled).
+- Google search links (`google.*/search?q=...` or the Google home page) are
+  then served as a results page **on our own domain**
+  (`https://tiny.devzel.work.gd/<code>?q=...`) that loads Google's
+  `cse.js` element; it runs the search automatically from the `q` parameter.
+- The search requests are made by the visitor's own browser through
+  Google's sanctioned embed, so there is no bot-check, and the address bar
+  stays on our domain.
+- Tradeoffs: the page is Google's results widget, not a pixel-identical
+  google.com page; the free tier shows ads; clicking a result goes to the
+  result's real site.
+- Without `GOOGLE_PSE_CX` set, Google links keep the previous proxy behaviour.
+
 ## Security Notes
 
 - A GitHub Personal Access Token was briefly exposed in plaintext in a git
