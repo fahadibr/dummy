@@ -53,6 +53,50 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Overrides for the search element's own markup (.gsc-*/.gs-*). Clean results
+// layout only - deliberately no Google logo or name, so the page can't pass
+// for google.com itself.
+const SEARCH_PAGE_CSS = `
+*{box-sizing:border-box}
+body{margin:0;font-family:arial,sans-serif;color:#202124;background:#fff}
+header{display:flex;align-items:center;gap:28px;padding:20px 24px 12px;border-bottom:1px solid #ebebeb}
+.brand{font-size:22px;font-weight:bold;color:#5f6368;text-decoration:none;white-space:nowrap}
+.box{flex:1;max-width:690px}
+main{padding:0 24px 40px;max-width:900px}
+@media (min-width:900px){main{margin-left:118px}}
+@media (max-width:600px){header{flex-direction:column;align-items:stretch;gap:12px;padding:16px}main{padding:0 16px 32px}}
+
+.gsc-control-searchbox-only,.gsc-control-cse{padding:0!important;border:0!important;background:transparent!important}
+form.gsc-search-box,table.gsc-search-box{margin:0!important}
+.gsc-input-box{border:1px solid #dfe1e5!important;border-radius:24px!important;padding:6px 14px!important;background:#fff!important;box-shadow:none!important}
+.gsc-input-box:hover,.gsc-input-box-focus{box-shadow:0 1px 6px rgba(32,33,36,.28)!important;border-color:transparent!important}
+input.gsc-input{font-size:16px!important;background:none!important}
+.gsc-search-button-v2{border:0!important;border-radius:24px!important;background:#fff!important;padding:10px 14px!important;cursor:pointer}
+.gsc-search-button-v2 svg{fill:#4285f4!important;width:18px!important;height:18px!important}
+
+.gsc-tabsArea{border:0!important;margin:8px 0 4px!important}
+.gsc-tabHeader{font-size:14px!important;color:#5f6368!important;background:none!important;border:0!important;padding:8px 12px 10px!important}
+.gsc-tabHeader.gsc-tabhActive{color:#1a73e8!important;border-bottom:3px solid #1a73e8!important}
+.gsc-above-wrapper-area{border:0!important;padding:4px 0 12px!important}
+.gsc-result-info{font-size:14px!important;color:#70757a!important;padding-left:0!important}
+
+.gsc-webResult.gsc-result,.gsc-results .gsc-imageResult{border:0!important;background:none!important;padding:0!important;margin:0 0 28px!important}
+.gs-webResult .gs-title,.gs-webResult .gs-title *{font-size:20px!important;line-height:1.3!important;color:#1a0dab!important;text-decoration:none!important}
+.gs-webResult .gs-title:hover *{text-decoration:underline!important}
+.gs-webResult .gs-visibleUrl,.gsc-url-top *{font-size:14px!important;color:#202124!important}
+.gs-webResult .gs-snippet{font-size:14px!important;line-height:1.58!important;color:#4d5156!important}
+.gsc-table-cell-thumbnail{padding-right:16px!important}
+
+.gsc-cursor-box{margin:24px 0!important;text-align:left!important}
+.gsc-cursor-page{font-size:14px!important;color:#1a0dab!important;margin-right:14px!important}
+.gsc-cursor-current-page{color:#202124!important;font-weight:bold!important}
+
+/* If the engine's control-panel layout is "Overlay", results render into a
+   hidden popup - show that wrapper inline as part of the page instead. */
+body main .gsc-results-wrapper-overlay,body main .gsc-results-wrapper-overlay.gsc-results-wrapper-visible{position:static!important;top:auto!important;left:auto!important;display:block!important;visibility:visible!important;opacity:1!important;width:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;box-shadow:none!important;padding:0!important;margin:0!important;background:none!important;transform:none!important}
+.gsc-results-close-btn,.gsc-modal-background-image{display:none!important}
+`;
+
 // The search element runs a search automatically on load when the page URL
 // carries the `q` query parameter, so callers redirect to `?q=...` first.
 function googleSearchPage(query) {
@@ -61,11 +105,25 @@ function googleSearchPage(query) {
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<style>body{font-family:arial,sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#fff}</style>
+<style>${SEARCH_PAGE_CSS}</style>
 <script async src="https://cse.google.com/cse.js?cx=${encodeURIComponent(GOOGLE_PSE_CX)}"></script>
 </head><body>
-<div class="gcse-searchbox" data-queryParameterName="q"></div>
-<div class="gcse-searchresults" data-linkTarget="_self"></div>
+<header>
+  <span class="brand">Search</span>
+  <div class="box"><div class="gcse-searchbox" data-queryParameterName="q"></div></div>
+</header>
+<main><div class="gcse-searchresults" data-linkTarget="_self"></div></main>
+<script>
+(function () {
+  var q = ${JSON.stringify(query).replace(/</g, '\\u003c')};
+  var tries = 0;
+  var timer = setInterval(function () {
+    var input = document.querySelector('input.gsc-input');
+    if (input && !input.value) input.value = q;
+    if (input || ++tries > 50) clearInterval(timer);
+  }, 100);
+})();
+</script>
 </body></html>`;
 }
 
