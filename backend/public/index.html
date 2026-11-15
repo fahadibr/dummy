@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiny URL Cloak</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  form { display: flex; gap: 8px; margin: 24px 0; }
+  input[type=url] { flex: 1; padding: 10px 12px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+  button { padding: 10px 18px; font-size: 1rem; border: 0; border-radius: 6px; background: #1a73e8; color: #fff; cursor: pointer; }
+  button:hover { background: #1558b0; }
+  #result { margin-top: 16px; padding: 12px; border-radius: 6px; background: #f3f3f3; word-break: break-all; display: none; }
+  #result.error { background: #fdecea; color: #a61b1b; }
+  #result a { color: #1a73e8; }
+  ul#history { list-style: none; padding: 0; font-size: 0.9rem; }
+  ul#history li { padding: 6px 0; border-bottom: 1px solid #eee; word-break: break-all; }
+</style>
+</head>
+<body>
+  <h1>Tiny URL Cloak</h1>
+  <p>Kisi bhi URL ko paste karen — short link banega jo click karne par original content dikhayega, lekin address bar me isi domain ka URL show hota rahega.</p>
+  <form id="shorten-form">
+    <input type="url" id="url-input" placeholder="https://example.com/some/long/path" required>
+    <button type="submit">Shorten</button>
+  </form>
+  <div id="result"></div>
+
+  <h2>Recent links</h2>
+  <ul id="history"></ul>
+
+  <script>
+    const form = document.getElementById('shorten-form');
+    const resultEl = document.getElementById('result');
+    const historyEl = document.getElementById('history');
+
+    async function loadHistory() {
+      const res = await fetch('/api/links');
+      const links = await res.json();
+      historyEl.innerHTML = links
+        .map((l) => `<li><a href="/${l.code}" target="_blank">${location.origin}/${l.code}</a> → ${l.target_url}</li>`)
+        .join('');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = document.getElementById('url-input').value;
+      resultEl.style.display = 'block';
+      resultEl.className = '';
+      resultEl.textContent = 'Working...';
+
+      try {
+        const res = await fetch('/api/shorten', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Something went wrong');
+
+        resultEl.innerHTML = `Short URL: <a href="${data.shortUrl}" target="_blank">${data.shortUrl}</a>`;
+        loadHistory();
+      } catch (err) {
+        resultEl.className = 'error';
+        resultEl.textContent = err.message;
+      }
+    });
+
+    loadHistory();
+  </script>
+</body>
+</html>
