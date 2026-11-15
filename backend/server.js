@@ -39,7 +39,7 @@ app.use(async (req, res, next) => {
   const code = subdomainCode(req.hostname);
   if (!code) return next(); // root domain: fall through to the routes below
 
-  const link = getLink(code);
+  const link = await getLink(code);
   if (!link) return res.status(404).send('Unknown short link');
 
   // The very first hit is the bare subdomain root ("/"), but the shortened
@@ -91,22 +91,22 @@ app.post('/api/shorten', express.json(), async (req, res) => {
   let code;
   do {
     code = nanoid();
-  } while (codeExists(code));
+  } while (await codeExists(code));
 
-  createLink(code, parsed.toString());
+  await createLink(code, parsed.toString());
 
   return res.json({ code, targetUrl: parsed.toString(), shortUrl: shortUrlFor(req, code) });
 });
 
-app.get('/api/links', (req, res) => {
-  const links = listLinks().map((l) => ({ ...l, shortUrl: shortUrlFor(req, l.code) }));
+app.get('/api/links', async (req, res) => {
+  const links = (await listLinks()).map((l) => ({ ...l, shortUrl: shortUrlFor(req, l.code) }));
   res.json(links);
 });
 
 // Convenience: pasting the root-domain form of a link (no subdomain) bounces
 // to the real subdomain link, still entirely on our own domain.
-app.get('/:code', (req, res) => {
-  const link = getLink(req.params.code);
+app.get('/:code', async (req, res) => {
+  const link = await getLink(req.params.code);
   if (!link) return res.status(404).send('Unknown short link');
   res.redirect(`${shortUrlFor(req, req.params.code)}/`);
 });

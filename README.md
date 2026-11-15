@@ -15,43 +15,51 @@ rehti hai, aur relative/root-relative links (`/search?q=x`) bhi bina kisi
 rewriting ke sahi resolve ho jate hain (browser ka normal behaviour).
 
 1. `backend/` ek Node/Express app hai ([server.js](backend/server.js),
-   [proxy.js](backend/proxy.js)):
-   - `POST /api/shorten` — koi bhi `http(s)://` URL do, 8-char code (SQLite
-     me store) ke sath `http://<code>.BASE_DOMAIN[:port]` wapas milta hai.
+   [proxy.js](backend/proxy.js), [db.js](backend/db.js)):
+   - `POST /api/shorten` — koi bhi `http(s)://` URL do, 8-char code ke sath
+     `http://<code>.BASE_DOMAIN[:port]` wapas milta hai.
    - Koi bhi request jiska Host header `*.BASE_DOMAIN` ho, wo subdomain-se-code
      nikal ke uska stored target URL server-side fetch karta hai aur response
      wapas stream kar deta hai (method/headers/body sab forward hote hain, na
      sirf GET).
+   - Pehli visit (bare subdomain root `/`) ko turant shortened URL ke asal
+     path/query par redirect kiya jata hai (subdomain wahi rehta hai) — isse
+     page ke andar relative links bhi sahi (real site ke path ke against)
+     resolve hote hain, sirf absolute wale nahi.
    - HTML responses me sirf wahi `href`/`src`/`action`/`srcset`/CSS `url()`
      rewrite hote hain jo **absolute aur target ke hi origin** ko point karte
      hain (e.g. `https://www.google.com/...`) — inhe proxy subdomain par
-     rewrite kiya jata hai. Relative/root-relative URLs ko chhua nahi jata,
-     kyunki wo already current subdomain ke against sahi resolve ho jate hain.
+     rewrite kiya jata hai. Relative/root-relative URLs ko chhua nahi jata.
    - Non-HTML/CSS targets (image, PDF, JSON, etc.) seedha stream ho jate hain.
+   - Har short-code ke liye ek chhota server-side cookie jar hai, taake target
+     site ke session/anti-abuse cookies (e.g. Google ka `AEC`/`NID`) proxy ke
+     through requests me carry ho sakein — browser khud ye cookies kabhi nahi
+     dekhta (domain-mismatch ki wajah se beeka reject ho jate), par server
+     unhe apni taraf se replay karta hai.
    - Basic SSRF guard hai: `localhost`, loopback, aur private-IP (10.x,
      192.168.x, 172.16-31.x, 169.254.x) hosts shorten/fetch nahi hote.
    - `Content-Security-Policy`, `X-Frame-Options`, `Strict-Transport-Security`
-     aur `Set-Cookie` headers target se forward nahi hote (warna ya to
-     browser block kar deta, ya future requests ko force-https kar deta, ya
-     cookie domain-mismatch ki wajah se silently drop ho jati — isliye
-     explicitly hata diya).
-2. `nginx/tiny.test.conf` — wildcard `server_name` ke saath is Node app ke
-   aage reverse proxy karta hai (production me yehi TLS bhi terminate
-   karega).
+     aur `Set-Cookie` headers target se browser ko forward nahi hote (warna ya
+     to browser block kar deta, ya future requests ko force-https kar deta, ya
+     cookie domain-mismatch ki wajah se silently drop ho jati).
+   - Storage: `DATABASE_URL` env var set ho to Postgres use hota hai (Render
+     deployment), warna local SQLite file (`backend/links.db`).
+2. `nginx/tiny.test.conf` — **sirf local testing** ke liye wildcard
+   `server_name` ke saath is Node app ke aage reverse proxy karta hai. Render
+   par ye zaroori nahi — Render khud hi TLS-terminating reverse proxy hai.
 
 **Known limitations (scope ke mutabiq):**
-- Agar shortened URL ka path root (`/`) nahi tha (e.g.
-  `https://x.com/blog/post1`), aur baad me proxied page ke andar koi link
-  literally `/` (root) par wapas jata hai, to wo original shortened URL hi
-  dobara replay ho jata hai (asli site ka root nahi) — kyunki humare paas
-  "pehli request" aur "baad me genuinely root ki request" me farq karne ka
-  koi reliable tareeqa nahi (dono hi bare `/` path hote hain).
-- Login/session cookies proxy ke through persist nahi hote (upar dekhein).
-- Agar target redirect karke kisi bilkul alag origin par chala jaye, to
-  sirf original origin ke same-origin links hi rewrite hote hain — naya
-  origin automatically cloak nahi hoga.
+- Login/session cookies (upar wale per-code jar ke alawa) browser ki taraf
+  persist nahi hote.
+- Agar target redirect karke kisi bilkul alag origin par chala jaye, to sirf
+  original origin ke same-origin links hi rewrite hote hain.
+- Google Search jaisi heavily bot-protected sites kabhi kabhi apna khud ka
+  "unusual traffic" / CAPTCHA page dikha sakti hain — ye Google ki IP-based
+  anti-abuse detection hai (proxy server ke outbound IP par), humare code ka
+  bug nahi, aur kisi bhi hosting (local ya VPS) par ho sakta hai agar wahi IP
+  se bohot zyada automated requests jayein.
 
-## Local setup aur run
+## Local setup aur run (macOS, is repo me)
 
 ```bash
 cd backend
@@ -59,71 +67,65 @@ npm install
 PORT=3001 node server.js
 ```
 
-> Note: is machine par port **3000** pehle se kisi aur project (dev server)
-> ke paas hai, isliye backend **3001** par chalaya gaya hai. `nginx/tiny.test.conf`
-> already `proxy_pass http://127.0.0.1:3001;` par set hai — agar backend port
-> badlo to ye file bhi update karni hogi.
+> Port **3000** is machine par kisi aur project ke paas hai, isliye **3001**
+> use kiya hai. `nginx/tiny.test.conf` already `proxy_pass http://127.0.0.1:3001;`
+> par set hai.
 
-### nginx wire-up (is Mac par, Homebrew nginx)
+### nginx wire-up (Homebrew nginx)
 
 ```bash
 mkdir -p /opt/homebrew/etc/nginx/servers
 ln -sf /Users/macbookpro/data/proj/tiny/nginx/tiny.test.conf \
   /opt/homebrew/etc/nginx/servers/tiny.test.conf
-nginx -t && nginx -s reload   # agar pehli dafa chala rahe ho to sirf: nginx
+nginx -t && nginx -s reload   # pehli dafa chala rahe ho to sirf: nginx
 ```
 
-### Local wildcard domain: `127.0.0.1.nip.io`
+### Wildcard local domain: `*.tiny.test`
 
-Local testing ke liye `BASE_DOMAIN = 127.0.0.1.nip.io` use ho raha hai —
-[nip.io](https://nip.io) ek public wildcard-DNS service hai: iska **koi bhi**
-subdomain (`<anything>.127.0.0.1.nip.io`) seedha real DNS se `127.0.0.1`
-resolve ho jata hai, koi local `/etc/hosts`/resolver config nahi chahiye.
-
-> Humne pehle `tiny.local` phir `tiny.test` + dnsmasq try kiya tha, lekin is
-> machine (macOS Sequoia 15.6) ki DNS config (`configd`) naya
-> `/etc/resolver/*` file bina reboot ke pick hi nahi kar rahi thi — isliye
-> `nip.io` par switch kiya, jo kisi local system-config par depend nahi
-> karta (sirf internet par normal DNS lookup chahiye, jo site content fetch
-> karne ke liye already chahiye hi tha).
-
-Koi sudo/system-config step nahi chahiye — seedha browser me kholen:
-**http://127.0.0.1.nip.io:8080/**
-
-- Form me koi bhi URL (jaise `https://www.google.com/`) daal ke Shorten
-  karen.
-- Mila hua short link (e.g. `http://abc12345.127.0.0.1.nip.io:8080`) naye
-  tab me kholen — content dikhega, lekin address bar me hamesha
-  `*.127.0.0.1.nip.io:8080` hi rahega, chahe site ke andar JS kitni bhi
-  navigation kare.
-
-Already curl se end-to-end verify ho chuka hai:
+`/etc/hosts` wildcard support nahi karta, isliye **dnsmasq** use kiya hai:
+`/opt/homebrew/etc/dnsmasq.conf` me `address=/tiny.test/127.0.0.1` add hai.
+Setup ke sudo steps:
 
 ```bash
-curl -s -X POST http://127.0.0.1.nip.io:8080/api/shorten \
-  -H 'Content-Type: application/json' -d '{"url":"https://www.wikipedia.org/"}'
-curl -s http://<code>.127.0.0.1.nip.io:8080/
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/tiny.test
+sudo brew services start dnsmasq
 ```
 
-## Production par apne real domain ke sath deploy karna
+> **macOS gotcha:** agar `scutil --dns | grep -A3 tiny.test` khaali aaye (naya
+> `/etc/resolver/*` file turant pick nahi ho raha), to Wi-Fi ko menu bar se
+> 5 second ke liye off/on karen — isse macOS apni network config refresh kar
+> leta hai aur resolver file pick ho jati hai, bina reboot ke.
+> (`.local` TLD kabhi use na karen — macOS use Bonjour/mDNS ke liye reserve
+> karta hai aur `/etc/resolver` wahan kaam hi nahi karta.)
 
-1. Server par is repo ko copy karen, `cd backend && npm install`.
-2. Backend ko supervise karen (e.g. `pm2 start server.js --name tiny` ya
-   systemd service), `BASE_DOMAIN=yourdomain.com` env var ke saath.
-3. DNS me apne domain ka **wildcard** A/AAAA record (`*.yourdomain.com`)
-   server ke IP par point karen.
-4. `nginx/tiny.test.conf` ko apne nginx config me copy/symlink karen aur:
-   - `server_name 127.0.0.1.nip.io *.127.0.0.1.nip.io;` ko
-     `server_name yourdomain.com *.yourdomain.com;` se replace karen.
-   - `listen 8080;` ko `listen 80;` kar den.
-5. Wildcard TLS cert (DNS-01 challenge chahiye, kyunki HTTP-01 wildcard ke
-   sath kaam nahi karta):
-   ```bash
-   sudo certbot certonly --manual --preferred-challenges dns \
-     -d yourdomain.com -d '*.yourdomain.com'
-   ```
-   (ya apne DNS provider ka certbot plugin use karen agar available ho),
-   phir nginx me `listen 443 ssl;` + cert paths add karen.
+Phir browser me kholen: **http://tiny.test:8080/**
+
+## Production: Render.com par deploy karna
+
+Ye repo [render.yaml](render.yaml) ke through ek Render **Blueprint** hai —
+Node web service + ek free Postgres database (links persist rahein, kyunki
+Render ke free web-service disk restart/sleep par reset ho jati hai).
+
+1. Render dashboard me **New → Blueprint** choose karen, apna GitHub repo
+   (jisme ye code pushed hai) connect karen — Render `render.yaml` khud detect
+   kar lega aur web service + database dono propose karega.
+2. Deploy hone ke baad, web service ke **Environment** tab me `BASE_DOMAIN`
+   set karen apne real domain se (e.g. `tiny.yourdomain.com` ya seedha
+   `yourdomain.com`) — `render.yaml` me ye jaan-boojh kar khaali chhoda gaya
+   hai (`sync: false`) kyunki ye aapka apna domain hona chahiye.
+3. Web service ke **Settings → Custom Domains** me do entries add karen:
+   - `yourdomain.com` (ya jo bhi aapne `BASE_DOMAIN` set kiya)
+   - `*.yourdomain.com` (wildcard — subdomain-per-link ke liye zaroori)
+   Render exact CNAME/A records bata dega jo apne DNS provider (GoDaddy,
+   Namecheap, Cloudflare, waghera) par add karne honge. Render in domains ke
+   liye khud hi TLS certificate issue/renew kar deta hai.
+4. Koi nginx config Render par nahi chahiye — Render ka apna edge hi reverse
+   proxy/TLS termination hai.
+
+Local SQLite file (`backend/links.db`) **commit nahi** hoti (`.gitignore` me
+hai) — Render par `DATABASE_URL` khud set ho jata hai jab Blueprint database
+ko web service se link karta hai, aur `backend/db.js` is case me Postgres use
+karta hai.
 
 ## Known trade-offs / aage badhane ke options
 
@@ -131,5 +133,5 @@ curl -s http://<code>.127.0.0.1.nip.io:8080/
   count) nahi hai; `backend/db.js` me easily add ho sakta hai.
 - `assertPublicUrl` ka SSRF-guard basic hai; agar publicly expose kar rahe ho
   to rate-limiting aur allow/deny domain list add karna recommended hai.
-- `dnsmasq` is machine par install/running reh gaya hai lekin ab use nahi ho
-  raha — agar chahein to hata sakte hain: `sudo brew services stop dnsmasq`.
+- Is Mac par `dnsmasq` install/running hai (local testing ke liye) — agar
+  chahein to hata sakte hain: `sudo brew services stop dnsmasq`.
