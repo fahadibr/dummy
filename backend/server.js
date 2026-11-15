@@ -81,9 +81,15 @@ input.gsc-input{font-size:16px!important;background:none!important}
 .gsc-result-info{font-size:14px!important;color:#70757a!important;padding-left:0!important}
 
 .gsc-webResult.gsc-result,.gsc-results .gsc-imageResult{border:0!important;background:none!important;padding:0!important;margin:0 0 28px!important}
+/* Favicon chip + site name/url line, like a modern Google result header. */
+.site-chip{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+.site-chip .fav{width:26px;height:26px;border-radius:50%;border:1px solid #ececec;background:#f1f3f4;flex:none}
+.site-chip .meta{display:flex;flex-direction:column;line-height:1.3;overflow:hidden}
+.site-chip .name{font-size:14px;color:#202124;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.site-chip .url{font-size:12px;color:#5f6368;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gsc-url-top,.gs-webResult .gs-visibleUrl-short,.gs-webResult .gs-visibleUrl-long{display:none!important}
 .gs-webResult .gs-title,.gs-webResult .gs-title *{font-size:20px!important;line-height:1.3!important;color:#1a0dab!important;text-decoration:none!important}
 .gs-webResult .gs-title:hover *{text-decoration:underline!important}
-.gs-webResult .gs-visibleUrl,.gsc-url-top *{font-size:14px!important;color:#202124!important}
 .gs-webResult .gs-snippet{font-size:14px!important;line-height:1.58!important;color:#4d5156!important}
 .gsc-table-cell-thumbnail{padding-right:16px!important}
 
@@ -122,6 +128,34 @@ function googleSearchPage(query) {
     if (input && !input.value) input.value = q;
     if (input || ++tries > 50) clearInterval(timer);
   }, 100);
+
+  // Add a favicon + site-name header above each result, the way modern
+  // Google results look. The favicon comes from Google's public favicon
+  // service; everything else is taken from the result's own visible URL.
+  function hostFrom(result) {
+    var a = result.querySelector('.gs-title a.gs-title');
+    try { return new URL(a.getAttribute('data-ctorig') || a.href).hostname.replace(/^www\\./, ''); }
+    catch (e) { var u = result.querySelector('.gs-visibleUrl'); return u ? u.textContent.trim().split('/')[0].replace(/^www\\./, '') : ''; }
+  }
+  function decorate(result) {
+    if (result.querySelector('.site-chip')) return;
+    var host = hostFrom(result);
+    if (!host) return;
+    var crumbEl = result.querySelector('.gs-visibleUrl-breadcrumb') || result.querySelector('.gs-visibleUrl');
+    var crumb = crumbEl ? crumbEl.textContent.trim().replace(/^https?:\\/\\//, '').replace(/^www\\./, '') : host;
+    var chip = document.createElement('div');
+    chip.className = 'site-chip';
+    chip.innerHTML = '<img class="fav" referrerpolicy="no-referrer" src="https://www.google.com/s2/favicons?sz=64&domain=' +
+      encodeURIComponent(host) + '"><div class="meta"><span class="name"></span><span class="url"></span></div>';
+    chip.querySelector('.name').textContent = host;
+    chip.querySelector('.url').textContent = crumb;
+    var title = result.querySelector('.gsc-thumbnail-inside') || result;
+    title.insertBefore(chip, title.firstChild);
+  }
+  var obs = new MutationObserver(function () {
+    document.querySelectorAll('.gsc-webResult.gsc-result').forEach(decorate);
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
 })();
 </script>
 </body></html>`;
