@@ -102,7 +102,12 @@ function updateCookieJar(code, setCookieHeaders) {
 // and so does any page JavaScript that builds new URLs from
 // `location.origin`/`location.host`, which is what a path-prefix scheme
 // cannot survive.
-function rewriteSameOriginUrl(value, targetOrigin, proxyOrigin) {
+// `pathPrefix` is '' in subdomain mode (each link has its own subdomain, so
+// root-relative URLs already land back on the same link without help) and
+// "/<code>" in path mode (no wildcard DNS available - every link shares the
+// one domain, so root-relative URLs need the code prefixed back on or
+// they'd escape to someone else's link / a 404).
+function rewriteSameOriginUrl(value, targetOrigin, proxyOrigin, pathPrefix) {
   if (!value) return value;
   const trimmed = value.trim();
   if (
@@ -120,7 +125,7 @@ function rewriteSameOriginUrl(value, targetOrigin, proxyOrigin) {
     try {
       const resolved = new URL(`https:${trimmed}`);
       if (resolved.origin === targetOrigin) {
-        return `//${new URL(proxyOrigin).host}${resolved.pathname}${resolved.search}${resolved.hash}`;
+        return `//${new URL(proxyOrigin).host}${pathPrefix}${resolved.pathname}${resolved.search}${resolved.hash}`;
       }
     } catch {
       /* not a valid protocol-relative URL, leave as-is */
@@ -128,10 +133,14 @@ function rewriteSameOriginUrl(value, targetOrigin, proxyOrigin) {
     return value;
   }
 
+  if (pathPrefix && trimmed.startsWith('/')) {
+    return `${pathPrefix}${trimmed}`;
+  }
+
   try {
     const resolved = new URL(trimmed);
     if (resolved.origin === targetOrigin) {
-      return `${proxyOrigin}${resolved.pathname}${resolved.search}${resolved.hash}`;
+      return `${proxyOrigin}${pathPrefix}${resolved.pathname}${resolved.search}${resolved.hash}`;
     }
   } catch {
     /* relative URL: nothing to rewrite */
@@ -139,16 +148,16 @@ function rewriteSameOriginUrl(value, targetOrigin, proxyOrigin) {
   return value;
 }
 
-function rewriteCssUrls(css, targetOrigin, proxyOrigin) {
+function rewriteCssUrls(css, targetOrigin, proxyOrigin, pathPrefix) {
   return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
-    const rewritten = rewriteSameOriginUrl(url, targetOrigin, proxyOrigin);
+    const rewritten = rewriteSameOriginUrl(url, targetOrigin, proxyOrigin, pathPrefix);
     return `url(${quote}${rewritten}${quote})`;
   });
 }
 
-function rewriteHtml(html, targetOrigin, proxyOrigin) {
+function rewriteHtml(html, targetOrigin, proxyOrigin, pathPrefix) {
   const $ = cheerio.load(html, { decodeEntities: false });
-  const rw = (v) => rewriteSameOriginUrl(v, targetOrigin, proxyOrigin);
+  const rw = (v) => rewriteSameOriginUrl(v, targetOrigin, proxyOrigin, pathPrefix);
 
   $('[href]').each((_, el) => $(el).attr('href', rw($(el).attr('href'))));
   $('[src]').each((_, el) => $(el).attr('src', rw($(el).attr('src'))));
@@ -165,10 +174,10 @@ function rewriteHtml(html, targetOrigin, proxyOrigin) {
     $(el).attr('srcset', rewritten);
   });
   $('[style]').each((_, el) => {
-    $(el).attr('style', rewriteCssUrls($(el).attr('style'), targetOrigin, proxyOrigin));
+    $(el).attr('style', rewriteCssUrls($(el).attr('style'), targetOrigin, proxyOrigin, pathPrefix));
   });
   $('style').each((_, el) => {
-    $(el).text(rewriteCssUrls($(el).text(), targetOrigin, proxyOrigin));
+    $(el).text(rewriteCssUrls($(el).text(), targetOrigin, proxyOrigin, pathPrefix));
   });
   $('meta[http-equiv="refresh" i]').each((_, el) => {
     const content = $(el).attr('content') || '';
@@ -213,14 +222,21 @@ async function fetchTarget(targetUrl, req, code) {
 
 // `link`: the stored { code, target_url } row. `opts.proxyHost` is the
 // host (with port) the browser used to reach us, e.g. "abc123.tiny.local:8080".
+// `opts.pathPrefix`: '' in subdomain mode, "/<code>" in path mode (no
+// wildcard DNS - see rewriteSameOriginUrl above).
 async function proxyTargetToResponse(link, req, res, opts) {
   const targetOrigin = new URL(link.target_url).origin;
   const proxyOrigin = `${opts.proxyProtocol}://${opts.proxyHost}`;
+  const pathPrefix = opts.pathPrefix || '';
 
-  // By the time we get here, server.js has already redirected the bare "/"
-  // entry hit to the shortened URL's real path/query, so every request's
-  // path/query maps straight onto the real origin, consistently.
-  const realUrl = `${targetOrigin}${req.originalUrl}`;
+  // By the time we get here, server.js has already redirected the bare entry
+  // hit ("/" in subdomain mode, "/<code>" in path mode) to the shortened
+  // URL's real path/query, so every request's path/query maps straight onto
+  // the real origin, consistently - after stripping our own path prefix.
+  const reqPath = pathPrefix && req.originalUrl.startsWith(pathPrefix)
+    ? req.originalUrl.slice(pathPrefix.length) || '/'
+    : req.originalUrl;
+  const realUrl = `${targetOrigin}${reqPath}`;
 
   const response = await fetchTarget(realUrl, req, link.code);
   const contentType = response.headers.get('content-type') || '';
@@ -236,7 +252,7 @@ async function proxyTargetToResponse(link, req, res, opts) {
 
   if (contentType.includes('text/html')) {
     const html = await response.text();
-    const rewritten = rewriteHtml(html, targetOrigin, proxyOrigin);
+    const rewritten = rewriteHtml(html, targetOrigin, proxyOrigin, pathPrefix);
     res.setHeader('content-type', 'text/html; charset=utf-8');
     res.send(rewritten);
     return;
@@ -245,7 +261,7 @@ async function proxyTargetToResponse(link, req, res, opts) {
   if (contentType.includes('text/css')) {
     const css = await response.text();
     res.setHeader('content-type', 'text/css; charset=utf-8');
-    res.send(rewriteCssUrls(css, targetOrigin, proxyOrigin));
+    res.send(rewriteCssUrls(css, targetOrigin, proxyOrigin, pathPrefix));
     return;
   }
 
