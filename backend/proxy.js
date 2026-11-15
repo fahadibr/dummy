@@ -252,7 +252,19 @@ async function proxyTargetToResponse(link, req, res, opts) {
     : req.originalUrl;
   const realUrl = `${targetOrigin}${reqPath}`;
 
-  const response = await fetchTarget(realUrl, req, link.code);
+  // A target's bot-check page (see below) is sometimes a one-off, transient
+  // response rather than a hard block - retrying plainly (same request, no
+  // fingerprint/IP tricks) sometimes gets a normal response instead. Only
+  // safe to retry for GET/HEAD: anything else reads `req` as a body stream,
+  // which can only be consumed once.
+  const canRetry = ['GET', 'HEAD'].includes(req.method);
+  const maxAttempts = canRetry ? 3 : 1;
+  let response;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    response = await fetchTarget(realUrl, req, link.code);
+    if (!/\/sorry\//.test(response.url || '') || attempt === maxAttempts) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+  }
   const contentType = response.headers.get('content-type') || '';
 
   // The target itself (notably Google) sometimes lands its own bot-check /
