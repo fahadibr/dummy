@@ -100,15 +100,24 @@ sudo brew services start dnsmasq
 
 Phir browser me kholen: **http://tiny.test:8080/**
 
-## Google search links (`GOOGLE_PSE_CX`)
+## Google search links
 
 Google search ko server-side proxy karne par Google bot-check dikhata hai.
-Iska hal: [programmablesearchengine.google.com](https://programmablesearchengine.google.com)
-par ek search engine banayen ("Search the entire web" on), uska **Search
-engine ID** `GOOGLE_PSE_CX` env var me set karen. Phir Google search links
-apni domain par Google ke official search widget wale page par khulenge
-(`/<code>?q=...`), address bar apni domain par rahega aur captcha nahi aayega.
-Variable set na ho to purana proxy behaviour chalta hai.
+Isliye Google search links (`google.*/search?q=...`) ko proxy karne ke bajaye
+apni domain par ek results page par serve kiya jata hai. Do backend options,
+env var se:
+
+- **`BRAVE_API_KEY`** (recommended) — [Brave Search API](https://brave.com/search/api)
+  ka key. Set hone par whole-web results milte hain, server-side Brave API se
+  (key secret rehti hai), apni domain ke `/__tiny/search` endpoint ke zariye.
+  Page `/<code>?q=...` par Web/Image tabs, favicon, snippet aur pagination ke
+  saath results dikhata hai.
+- **`GOOGLE_PSE_CX`** (fallback) — Google Programmable Search Engine ID. Google
+  ne isme "entire web" band kar diya hai, to ye sirf engine me add ki gayi
+  sites search karta hai.
+
+Dono me se koi set na ho to Google links purane proxy behaviour par chalte
+hain. Brave key set ho to wo PSE par tarjeeh paata hai.
 
 ## Production: Render.com par deploy karna
 
