@@ -64,7 +64,8 @@ function googleSearchPage(query) {
 <style>body{font-family:arial,sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#fff}</style>
 <script async src="https://cse.google.com/cse.js?cx=${encodeURIComponent(GOOGLE_PSE_CX)}"></script>
 </head><body>
-<div class="gcse-search" data-queryParameterName="q" data-linkTarget="_self"></div>
+<div class="gcse-searchbox" data-queryParameterName="q"></div>
+<div class="gcse-searchresults" data-linkTarget="_self"></div>
 </body></html>`;
 }
 
