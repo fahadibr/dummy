@@ -155,9 +155,22 @@ function rewriteCssUrls(css, targetOrigin, proxyOrigin, pathPrefix) {
   });
 }
 
+// Google's own search page fires a `window.prs(...)` performance-telemetry
+// beacon on load (nothing to do with rendering results - it's purely
+// analytics, the kind privacy tools already routinely block). That beacon's
+// request is what was landing on Google's own bot-check page when replayed
+// from our server's IP. Making `window.prs` permanently undefined - before
+// Google's own script runs - makes its own `if (window.prs)` guard skip the
+// call entirely, so it's simply never sent. Harmless no-op on any other site.
+const DISABLE_TELEMETRY_BEACON_SCRIPT =
+  "<script>Object.defineProperty(window,'prs',{value:undefined,writable:false,configurable:false});</script>";
+
 function rewriteHtml(html, targetOrigin, proxyOrigin, pathPrefix) {
   const $ = cheerio.load(html, { decodeEntities: false });
   const rw = (v) => rewriteSameOriginUrl(v, targetOrigin, proxyOrigin, pathPrefix);
+
+  if ($('head').length === 0) $.root().prepend('<head></head>');
+  $('head').prepend(DISABLE_TELEMETRY_BEACON_SCRIPT);
 
   $('[href]').each((_, el) => $(el).attr('href', rw($(el).attr('href'))));
   $('[src]').each((_, el) => $(el).attr('src', rw($(el).attr('src'))));
